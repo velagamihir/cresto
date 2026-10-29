@@ -1,6 +1,4 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { SAMPLE_IMAGES } from '../data/samples';
-import { SampleImage } from '../types';
 import { parseFigmaFile, ParsedFigmaFile } from '../services/figmaParser';
 import {
   UploadCloud,
@@ -9,15 +7,13 @@ import {
   ZoomOut,
   RotateCcw,
   X,
-  Sparkles,
-  Layers,
   FileCode,
   Zap,
 } from 'lucide-react';
 
 interface ImageUploaderProps {
   imagePreview: string | null;
-  onImageSelected: (dataUrl: string, fileName?: string, sample?: SampleImage) => void;
+  onImageSelected: (dataUrl: string, fileName?: string) => void;
   onFigmaSelected: (figma: ParsedFigmaFile) => void;
   onClearImage: () => void;
   figmaData: ParsedFigmaFile | null;
@@ -105,58 +101,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     setIsDragging(false);
   };
 
-  const handleSelectSample = (sample: SampleImage) => {
-    const img = new Image();
-    img.onload = () => {
-      setImageMeta({ width: img.naturalWidth || 600, height: img.naturalHeight || 800, name: sample.title });
-    };
-    img.src = sample.dataUrl;
-    onImageSelected(sample.dataUrl, sample.title, sample);
-    setZoomLevel(1);
-  };
-
-  const handleLoadSampleFigma = async () => {
-    // Emulate Figma parse with sample data
-    const mockFigmaFile = new File([''], 'WalletDesign.fig');
-    try {
-      const parsed = await parseFigmaFile(mockFigmaFile);
-      onFigmaSelected(parsed);
-    } catch {
-      // Fallback
-    }
-  };
-
   return (
     <div style={styles.container}>
-      {/* Preset Mockups Ribbon */}
-      <div style={styles.presetSection}>
-        <div style={styles.presetHeader}>
-          <div style={styles.presetTitle}>
-            <Sparkles size={14} color="#818CF8" />
-            <span>Ready Samples</span>
-          </div>
-          <span style={styles.presetSub}>Click any sample for instant generation</span>
-        </div>
-        <div style={styles.presetCardsGrid}>
-          {SAMPLE_IMAGES.map((sample) => (
-            <button
-              key={sample.id}
-              style={styles.presetCard}
-              onClick={() => handleSelectSample(sample)}
-              title={sample.description}
-            >
-              <div style={styles.presetCardThumb}>
-                <img src={sample.dataUrl} alt={sample.title} style={styles.presetThumbImg} />
-              </div>
-              <div style={styles.presetCardContent}>
-                <div style={styles.presetCardTag}>{sample.category}</div>
-                <div style={styles.presetCardTitle}>{sample.title}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Main Dropzone / Viewer */}
       {!imagePreview && !figmaData ? (
         <div
@@ -180,16 +126,16 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           />
 
           <div style={styles.uploadIconWrapper}>
-            <UploadCloud size={32} color="#818CF8" />
+            <UploadCloud size={36} color="#818CF8" />
           </div>
 
-          <h3 style={styles.dropTitle}>Drop your PNG, Figma (.fig), or UI Mockup</h3>
+          <h3 style={styles.dropTitle}>Drop your .fig file or PNG screenshot here</h3>
           <p style={styles.dropSub}>Drag & drop, browse files, or press Ctrl+V to paste from clipboard</p>
 
           <div style={styles.badgeRow}>
             <span style={{ ...styles.formatBadge, ...styles.figBadge }}>
-              <Zap size={11} color="#A7F3D0" />
-              <span>.FIG (Figma Vector)</span>
+              <Zap size={12} color="#A7F3D0" />
+              <span>.FIG (Figma Vector File)</span>
             </span>
             <span style={styles.formatBadge}>PNG</span>
             <span style={styles.formatBadge}>JPG</span>
@@ -197,8 +143,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           </div>
 
           <div style={styles.figmaHelperCallout}>
-            <Zap size={13} color="#10B981" />
-            <span>Dropping a <strong>.fig</strong> file provides 100% pixel-perfect vector code with zero AI latency!</span>
+            <Zap size={14} color="#10B981" />
+            <span>
+              <strong>Pro Tip:</strong> Dropping a <strong>.fig</strong> file provides 100% pixel-perfect vector code with exact Auto-Layout, fonts, and colors instantly without needing an AI API key.
+            </span>
           </div>
         </div>
       ) : (
@@ -209,7 +157,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
                 <>
                   <FileCode size={15} color="#10B981" />
                   <span style={styles.fileName}>{figmaData.title}.fig</span>
-                  <span style={styles.figmaBadge}>Vector Scene Graph</span>
+                  <span style={styles.figmaBadge}>Figma Vector Scene Graph</span>
                 </>
               ) : (
                 <>
@@ -246,7 +194,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
               <button
                 style={{ ...styles.toolBtn, ...styles.clearBtn }}
                 onClick={onClearImage}
-                title="Clear and pick another file"
+                title="Clear and upload another file"
               >
                 <X size={14} />
               </button>
@@ -301,88 +249,10 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 16,
   },
-  presetSection: {
-    backgroundColor: 'rgba(26, 34, 52, 0.5)',
-    border: '1px solid rgba(255, 255, 255, 0.08)',
-    borderRadius: 16,
-    padding: 14,
-  },
-  presetHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  presetTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    fontSize: 12,
-    fontWeight: 700,
-    color: '#F8FAFC',
-    textTransform: 'uppercase',
-    letterSpacing: '0.6px',
-  },
-  presetSub: {
-    fontSize: 11,
-    color: '#94A3B8',
-  },
-  presetCardsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: 10,
-  },
-  presetCard: {
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    border: '1px solid rgba(255, 255, 255, 0.07)',
-    borderRadius: 12,
-    padding: 8,
-    cursor: 'pointer',
-    textAlign: 'left',
-    transition: 'all 0.2s ease',
-    overflow: 'hidden',
-  },
-  presetCardThumb: {
-    width: '100%',
-    height: 64,
-    borderRadius: 8,
-    backgroundColor: '#0F172A',
-    overflow: 'hidden',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  presetThumbImg: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-  },
-  presetCardContent: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
-  },
-  presetCardTag: {
-    fontSize: 9,
-    fontWeight: 700,
-    color: '#818CF8',
-    textTransform: 'uppercase',
-  },
-  presetCardTitle: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: '#E2E8F0',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
   dropzone: {
-    border: '2px dashed rgba(255, 255, 255, 0.15)',
-    borderRadius: 20,
-    padding: '36px 24px',
+    border: '2px dashed rgba(255, 255, 255, 0.16)',
+    borderRadius: 22,
+    padding: '48px 24px',
     backgroundColor: 'rgba(17, 24, 39, 0.6)',
     display: 'flex',
     flexDirection: 'column',
@@ -391,7 +261,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     textAlign: 'center',
     transition: 'all 0.25s ease',
-    minHeight: 280,
+    minHeight: 340,
   },
   dropzoneActive: {
     borderColor: '#6366F1',
@@ -399,26 +269,26 @@ const styles: Record<string, React.CSSProperties> = {
     transform: 'scale(1.01)',
   },
   uploadIconWrapper: {
-    width: 60,
-    height: 60,
-    borderRadius: 18,
+    width: 68,
+    height: 68,
+    borderRadius: 20,
     backgroundColor: 'rgba(99, 102, 241, 0.15)',
     display: 'grid',
     placeItems: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
     boxShadow: '0 8px 24px rgba(99, 102, 241, 0.25)',
   },
   dropTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 700,
     color: '#F8FAFC',
     marginBottom: 6,
   },
   dropSub: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#94A3B8',
-    maxWidth: 380,
-    marginBottom: 16,
+    maxWidth: 400,
+    marginBottom: 20,
     lineHeight: 1.5,
   },
   badgeRow: {
@@ -428,18 +298,18 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
   },
   formatBadge: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: 700,
     color: '#94A3B8',
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    padding: '4px 10px',
+    padding: '5px 12px',
     borderRadius: 8,
     border: '1px solid rgba(255, 255, 255, 0.08)',
   },
   figBadge: {
     display: 'flex',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
     backgroundColor: 'rgba(16, 185, 129, 0.15)',
     color: '#A7F3D0',
     borderColor: 'rgba(16, 185, 129, 0.35)',
@@ -448,14 +318,15 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    marginTop: 18,
-    padding: '8px 16px',
+    marginTop: 22,
+    padding: '10px 16px',
     borderRadius: 12,
     backgroundColor: 'rgba(16, 185, 129, 0.08)',
     border: '1px solid rgba(16, 185, 129, 0.2)',
     color: '#CBD5E1',
-    fontSize: 11,
-    maxWidth: 420,
+    fontSize: 12,
+    maxWidth: 440,
+    lineHeight: 1.4,
   },
   previewContainer: {
     backgroundColor: 'rgba(17, 24, 39, 0.8)',
@@ -469,7 +340,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '10px 16px',
+    padding: '12px 18px',
     backgroundColor: 'rgba(15, 23, 42, 0.95)',
     borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
   },
@@ -479,10 +350,10 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
   },
   fileName: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: 600,
     color: '#E2E8F0',
-    maxWidth: 160,
+    maxWidth: 200,
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -498,7 +369,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     color: '#34D399',
     backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    padding: '2px 8px',
+    padding: '3px 8px',
     borderRadius: 6,
   },
   zoomControls: {
@@ -530,7 +401,7 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
   },
   imageScrollArea: {
-    height: 380,
+    height: 400,
     overflow: 'auto',
     display: 'flex',
     alignItems: 'center',
@@ -548,7 +419,7 @@ const styles: Record<string, React.CSSProperties> = {
     transformOrigin: 'center center',
   },
   figmaMetaContainer: {
-    padding: 28,
+    padding: 32,
     display: 'flex',
     flexDirection: 'column',
     gap: 20,
@@ -589,19 +460,19 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'rgba(30, 41, 59, 0.6)',
     border: '1px solid rgba(255, 255, 255, 0.08)',
     borderRadius: 14,
-    padding: '14px 12px',
+    padding: '16px 12px',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: 4,
   },
   statVal: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 800,
     color: '#34D399',
   },
   statLabel: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#94A3B8',
     textAlign: 'center',
   },

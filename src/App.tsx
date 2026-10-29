@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
-import { Framework, GenerationOptions, GenerationResult, SampleImage } from './types';
+import { Framework, GenerationOptions, GenerationResult } from './types';
 import { Navbar } from './components/Navbar';
 import { ImageUploader } from './components/ImageUploader';
 import { OptionsPanel } from './components/OptionsPanel';
@@ -10,8 +10,7 @@ import { ApiKeyModal } from './components/ApiKeyModal';
 import { generateCodeFromImage } from './services/gemini';
 import { generateCodeFromFigma } from './services/figmaCodeGenerator';
 import { ParsedFigmaFile } from './services/figmaParser';
-import { SAMPLE_IMAGES } from './data/samples';
-import { Code2, Eye, CheckCircle2, ArrowRight, Zap } from 'lucide-react';
+import { Code2, Eye, CheckCircle2, Zap, Layers, Sparkles } from 'lucide-react';
 
 export function App() {
   const [framework, setFramework] = useState<Framework>('react');
@@ -22,12 +21,12 @@ export function App() {
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Image, Figma & Generation state
-  const [imagePreview, setImagePreview] = useState<string | null>(SAMPLE_IMAGES[1].dataUrl);
+  // Clean initial state (no preloaded samples)
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [figmaData, setFigmaData] = useState<ParsedFigmaFile | null>(null);
   const [options, setOptions] = useState<GenerationOptions>({
     framework: 'react',
-    componentName: 'AnalyticsDashboard',
+    componentName: 'MyComponent',
     styling: 'css',
     responsive: true,
     addMockData: true,
@@ -43,7 +42,7 @@ export function App() {
   // Sync framework change with options
   const handleFrameworkChange = (newFramework: Framework) => {
     setFramework(newFramework);
-    let defaultCompName = 'DashboardComponent';
+    let defaultCompName = 'MyComponent';
     if (newFramework === 'react-native') defaultCompName = 'MobileScreen';
     if (newFramework === 'angular') defaultCompName = 'CardComponent';
 
@@ -55,17 +54,14 @@ export function App() {
     }));
   };
 
-  const handleImageSelected = (dataUrl: string, fileName?: string, sample?: SampleImage) => {
+  const handleImageSelected = (dataUrl: string, fileName?: string) => {
     setImagePreview(dataUrl);
     setFigmaData(null);
-
-    if (sample) {
-      handleFrameworkChange(sample.suggestedFramework);
-      setOptions((prev) => ({
-        ...prev,
-        framework: sample.suggestedFramework,
-        componentName: sample.suggestedName,
-      }));
+    if (fileName) {
+      const cleanName = fileName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9]/g, '');
+      if (cleanName) {
+        setOptions((prev) => ({ ...prev, componentName: cleanName }));
+      }
     }
   };
 
@@ -78,7 +74,7 @@ export function App() {
       componentName: cleanName,
     }));
 
-    // Instantly generate 100% pixel-perfect code from Figma AST
+    // Instantly generate 100% pixel-perfect code from Figma AST without AI
     const result = generateCodeFromFigma(parsed.rootNode, framework, cleanName);
     result.sourceType = 'figma';
     setGenerationResult(result);
@@ -173,12 +169,6 @@ export function App() {
     }
   };
 
-  // Run initial mock generation on mount so the user has immediate visual code to explore
-  useEffect(() => {
-    handleGenerate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <div style={styles.appWrapper}>
       {/* Navbar */}
@@ -199,8 +189,8 @@ export function App() {
           <div style={styles.sectionHeader}>
             <span style={styles.sectionNumber}>1</span>
             <div>
-              <h2 style={styles.sectionTitle}>Input Mockup</h2>
-              <p style={styles.sectionSub}>Upload a PNG screenshot or choose a sample mockup</p>
+              <h2 style={styles.sectionTitle}>Input File</h2>
+              <p style={styles.sectionSub}>Drop your .fig file or PNG mockup</p>
             </div>
           </div>
 
@@ -303,21 +293,21 @@ export function App() {
               )
             ) : (
               <div style={styles.emptyPromptCard}>
-                <div style={styles.emptySparkle}>✨</div>
-                <h3 style={styles.emptyTitle}>Ready to transform your UI</h3>
+                <div style={styles.emptyIconCircle}>
+                  <Layers size={36} color="#818CF8" />
+                </div>
+                <h3 style={styles.emptyTitle}>Awaiting Mockup / Figma File</h3>
                 <p style={styles.emptyDesc}>
-                  Upload or select a PNG image on the left, then click <strong>"Generate Code"</strong> to produce
-                  production-ready {framework === 'react-native' ? 'React Native' : framework === 'react' ? 'React' : 'Angular'} components.
+                  Drop a <strong>.fig file</strong> or <strong>PNG screenshot</strong> on the left.
+                  Your clean, production-ready {framework === 'react-native' ? 'React Native' : framework === 'react' ? 'React' : 'Angular'} components and live preview will appear right here.
                 </p>
-                <button
-                  style={styles.sampleActionBtn}
-                  onClick={() => {
-                    handleImageSelected(SAMPLE_IMAGES[0].dataUrl, SAMPLE_IMAGES[0].title, SAMPLE_IMAGES[0]);
-                  }}
-                >
-                  <span>Load Mobile Crypto Sample</span>
-                  <ArrowRight size={14} />
-                </button>
+                <div style={styles.stepsBadgeRow}>
+                  <div style={styles.stepBadge}>1. Drop .fig or PNG</div>
+                  <div style={styles.stepArrow}>→</div>
+                  <div style={styles.stepBadge}>2. Pick Framework</div>
+                  <div style={styles.stepArrow}>→</div>
+                  <div style={styles.stepBadge}>3. Instant Code &amp; Preview</div>
+                </div>
               </div>
             )}
           </div>
@@ -466,9 +456,15 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 48,
     textAlign: 'center',
   },
-  emptySparkle: {
-    fontSize: 48,
-    marginBottom: 16,
+  emptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 24,
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    display: 'grid',
+    placeItems: 'center',
+    marginBottom: 20,
+    boxShadow: '0 8px 24px rgba(99, 102, 241, 0.2)',
   },
   emptyTitle: {
     fontSize: 20,
@@ -479,23 +475,29 @@ const styles: Record<string, React.CSSProperties> = {
   emptyDesc: {
     fontSize: 14,
     color: '#94A3B8',
-    maxWidth: 420,
+    maxWidth: 440,
     lineHeight: 1.6,
     marginBottom: 24,
   },
-  sampleActionBtn: {
+  stepsBadgeRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    padding: '10px 20px',
-    background: 'rgba(99, 102, 241, 0.15)',
-    border: '1px solid rgba(99, 102, 241, 0.4)',
-    borderRadius: 12,
-    color: '#A5B4FC',
-    fontSize: 13,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  stepBadge: {
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    padding: '6px 12px',
+    fontSize: 12,
     fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s',
+    color: '#CBD5E1',
+  },
+  stepArrow: {
+    color: '#6366F1',
+    fontWeight: 'bold',
   },
 };
 
