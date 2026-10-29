@@ -1,37 +1,26 @@
 import { Framework, GenerationResult } from '../types';
-
-export interface DetectedBlock {
-  type: 'header' | 'card' | 'button' | 'list' | 'text-group' | 'image-placeholder';
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  backgroundColor: string;
-  textColor?: string;
-  borderRadius?: number;
-  isFlexRow?: boolean;
-  hasBorder?: boolean;
-  borderColor?: string;
-  children?: DetectedBlock[];
-  label?: string;
-}
+import { extractTextFromImageLocally, RecognizedElement } from './localOcrEngine';
 
 export interface AnalysisSummary {
   dominantBg: string;
   accentColor: string;
   textColor: string;
   cardBg: string;
-  blocks: DetectedBlock[];
   isMobileAspect: boolean;
   width: number;
   height: number;
+  elements: RecognizedElement[];
+  rawText: string;
 }
 
 /**
- * Analyzes an actual PNG or image using an HTML5 Canvas to detect its real colors,
- * layout structure, cards, buttons, and visual hierarchy.
+ * Analyzes an actual PNG or image using an HTML5 Canvas and Tesseract OCR
+ * to extract real text, buttons, inputs, headings, colors, and layout structure.
  */
 export async function analyzeImageLocally(dataUrl: string): Promise<AnalysisSummary> {
+  // Run OCR to extract real text and semantic elements
+  const ocr = await extractTextFromImageLocally(dataUrl);
+
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -39,7 +28,7 @@ export async function analyzeImageLocally(dataUrl: string): Promise<AnalysisSumm
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        resolve(createFallbackSummary(img.width, img.height));
+        resolve(createFallbackSummary(img.width, img.height, ocr.elements, ocr.rawText));
         return;
       }
 
@@ -58,43 +47,20 @@ export async function analyzeImageLocally(dataUrl: string): Promise<AnalysisSumm
         getPixel(data, sampleW, sampleW - 5, 5),
         getPixel(data, sampleW, 5, sampleH - 5),
         getPixel(data, sampleW, sampleW - 5, sampleH - 5),
-        getPixel(data, sampleW, Math.floor(sampleW / 2), 5),
       ];
       const dominantBg = rgbToHex(cornerColors[0].r, cornerColors[0].g, cornerColors[0].b);
       const isDark = isDarkColor(cornerColors[0]);
-
-      // Default text color based on background luminance
       const textColor = isDark ? '#F8FAFC' : '#0F172A';
 
-      // 2. Scan rows for horizontal regions (header, main, sections)
-      const blocks: DetectedBlock[] = [];
-      const isMobile = sampleH > sampleW * 1.3;
-
-      // Header detection (top 15-20%)
-      const headerH = Math.round(sampleH * 0.12);
-      const headerColor = getPixel(data, sampleW, Math.floor(sampleW / 2), Math.min(headerH - 5, 20));
-      const headerBg = rgbToHex(headerColor.r, headerColor.g, headerColor.b);
-
-      blocks.push({
-        type: 'header',
-        x: 0,
-        y: 0,
-        width: 100,
-        height: Math.round((headerH / sampleH) * 100),
-        backgroundColor: headerBg !== dominantBg ? headerBg : 'transparent',
-        label: 'NavigationHeader',
-      });
-
-      // 3. Scan for distinct content blocks / cards (boxes with different contrast)
+      // 2. Scan for card background and vibrant accent colors
       let cardBg = isDark ? '#1E293B' : '#FFFFFF';
       let accentColor = '#6366F1';
       const colorHistogram: Record<string, number> = {};
 
-      // Sample a grid across the image
       const stepX = Math.max(1, Math.floor(sampleW / 30));
       const stepY = Math.max(1, Math.floor(sampleH / 30));
 
-      for (let y = headerH; y < sampleH - 20; y += stepY) {
+      for (let y = 20; y < sampleH - 20; y += stepY) {
         for (let x = 10; x < sampleW - 10; x += stepX) {
           const p = getPixel(data, sampleW, x, y);
           const hex = rgbToHex(p.r, p.g, p.b);
@@ -104,129 +70,35 @@ export async function analyzeImageLocally(dataUrl: string): Promise<AnalysisSumm
         }
       }
 
-      // Pick most frequent non-bg colors
       const sortedColors = Object.entries(colorHistogram).sort((a, b) => b[1] - a[1]);
       if (sortedColors.length > 0) {
         cardBg = sortedColors[0][0];
       }
-      if (sortedColors.length > 1) {
-        // Find a vibrant accent
-        for (let i = 1; i < Math.min(sortedColors.length, 10); i++) {
-          const col = hexToRgb(sortedColors[i][0]);
-          if (col && isVibrant(col)) {
-            accentColor = sortedColors[i][0];
-            break;
-          }
+      for (let i = 0; i < Math.min(sortedColors.length, 12); i++) {
+        const col = hexToRgb(sortedColors[i][0]);
+        if (col && isVibrant(col)) {
+          accentColor = sortedColors[i][0];
+          break;
         }
       }
 
-      // 4. Construct structural cards based on image proportions
-      if (isMobile) {
-        // Mobile layout: Hero card + action grid + list items
-        blocks.push({
-          type: 'card',
-          x: 4,
-          y: 15,
-          width: 92,
-          height: 28,
-          backgroundColor: cardBg,
-          borderRadius: 20,
-          label: 'HeroFeaturedCard',
-        });
-
-        blocks.push({
-          type: 'button',
-          x: 4,
-          y: 46,
-          width: 92,
-          height: 10,
-          backgroundColor: accentColor,
-          borderRadius: 14,
-          label: 'PrimaryActionButton',
-        });
-
-        blocks.push({
-          type: 'list',
-          x: 4,
-          y: 60,
-          width: 92,
-          height: 35,
-          backgroundColor: cardBg,
-          borderRadius: 16,
-          label: 'ContentListSection',
-        });
-      } else {
-        // Web / Dashboard layout: Metric cards grid + Main content + Sidebar
-        blocks.push({
-          type: 'card',
-          x: 2,
-          y: 14,
-          width: 30,
-          height: 22,
-          backgroundColor: cardBg,
-          borderRadius: 14,
-          label: 'MetricCardAlpha',
-        });
-
-        blocks.push({
-          type: 'card',
-          x: 35,
-          y: 14,
-          width: 30,
-          height: 22,
-          backgroundColor: cardBg,
-          borderRadius: 14,
-          label: 'MetricCardBeta',
-        });
-
-        blocks.push({
-          type: 'card',
-          x: 68,
-          y: 14,
-          width: 30,
-          height: 22,
-          backgroundColor: cardBg,
-          borderRadius: 14,
-          label: 'MetricCardGamma',
-        });
-
-        blocks.push({
-          type: 'card',
-          x: 2,
-          y: 40,
-          width: 63,
-          height: 55,
-          backgroundColor: cardBg,
-          borderRadius: 16,
-          label: 'MainContentPanel',
-        });
-
-        blocks.push({
-          type: 'card',
-          x: 68,
-          y: 40,
-          width: 30,
-          height: 55,
-          backgroundColor: cardBg,
-          borderRadius: 16,
-          label: 'SidebarPanel',
-        });
-      }
+      const isMobile = img.height > img.width * 1.25;
 
       resolve({
         dominantBg,
         accentColor,
         textColor,
         cardBg,
-        blocks,
         isMobileAspect: isMobile,
         width: img.width,
         height: img.height,
+        elements: ocr.elements,
+        rawText: ocr.rawText,
       });
     };
 
     img.onerror = () => {
-      resolve(createFallbackSummary(800, 600));
+      resolve(createFallbackSummary(800, 600, ocr.elements, ocr.rawText));
     };
 
     img.src = dataUrl;
@@ -260,7 +132,6 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 function isDarkColor(c: { r: number; g: number; b: number }): boolean {
-  // Relative luminance formula
   const luma = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
   return luma < 128;
 }
@@ -268,32 +139,32 @@ function isDarkColor(c: { r: number; g: number; b: number }): boolean {
 function isVibrant(c: { r: number; g: number; b: number }): boolean {
   const max = Math.max(c.r, c.g, c.b);
   const min = Math.min(c.r, c.g, c.b);
-  const diff = max - min;
-  return diff > 50 && max > 70;
+  return max - min > 45 && max > 70;
 }
 
-function createFallbackSummary(w: number, h: number): AnalysisSummary {
+function createFallbackSummary(w: number, h: number, elements: RecognizedElement[] = [], rawText: string = ''): AnalysisSummary {
   return {
     dominantBg: '#0F172A',
     accentColor: '#6366F1',
     textColor: '#F8FAFC',
     cardBg: '#1E293B',
-    blocks: [],
     isMobileAspect: h > w,
     width: w,
     height: h,
+    elements,
+    rawText,
   };
 }
 
 /**
- * Synthesizes unique, tailored code for the user's specific image
+ * Synthesizes unique code tailored to the user's specific image and detected OCR elements
  */
 export function generateCodeFromAnalysis(
   analysis: AnalysisSummary,
   framework: Framework,
   componentName: string
 ): GenerationResult {
-  const comp = componentName.trim() || (analysis.isMobileAspect ? 'MobileScreen' : 'DashboardView');
+  const comp = componentName.trim() || (analysis.isMobileAspect ? 'MobileScreen' : 'CustomView');
 
   if (framework === 'react-native') {
     return generateReactNativeFromAnalysis(analysis, comp);
@@ -305,67 +176,101 @@ export function generateCodeFromAnalysis(
 }
 
 function generateReactFromAnalysis(analysis: AnalysisSummary, comp: string): GenerationResult {
-  const { dominantBg, accentColor, textColor, cardBg, isMobileAspect } = analysis;
+  const { dominantBg, accentColor, textColor, cardBg, isMobileAspect, elements } = analysis;
+
+  // Render elements detected from user's image
+  const hasElements = elements.length > 0;
+  const headings = elements.filter((e) => e.type === 'heading' || e.type === 'subheading');
+  const buttons = elements.filter((e) => e.type === 'button');
+  const inputs = elements.filter((e) => e.type === 'input');
+  const prices = elements.filter((e) => e.type === 'price');
+  const otherTexts = elements.filter((e) => e.type === 'text' || e.type === 'link');
+
+  const mainHeading = headings[0]?.text || comp;
+  const subHeading = headings[1]?.text || otherTexts[0]?.text || '';
+
+  const jsxElements: string[] = [];
+
+  // 1. Headings
+  jsxElements.push(`        <div className="header-section">
+          <h1 className="title-heading">${escapeJsx(mainHeading)}</h1>
+          ${subHeading ? `<p className="subtitle-text">${escapeJsx(subHeading)}</p>` : ''}
+        </div>`);
+
+  // 2. Form Inputs (if detected)
+  if (inputs.length > 0) {
+    const inputFields = inputs
+      .map(
+        (inp) => `          <div className="input-group">
+            <label className="input-label">${escapeJsx(inp.text)}</label>
+            <input
+              type="${inp.text.toLowerCase().includes('password') ? 'password' : 'text'}"
+              placeholder="Enter ${escapeJsx(inp.text.toLowerCase())}"
+              className="text-input"
+            />
+          </div>`
+      )
+      .join('\n');
+
+    jsxElements.push(`        <div className="card-box form-card">
+${inputFields}
+        </div>`);
+  }
+
+  // 3. Prices / Metrics (if detected)
+  if (prices.length > 0) {
+    const priceBadges = prices
+      .map(
+        (p) => `          <div className="price-item">
+            <span className="price-value">${escapeJsx(p.text)}</span>
+          </div>`
+      )
+      .join('\n');
+
+    jsxElements.push(`        <div className="card-box metrics-card">
+${priceBadges}
+        </div>`);
+  }
+
+  // 4. Content card with other detected text items
+  if (otherTexts.length > 1) {
+    const textItems = otherTexts
+      .slice(1, 8)
+      .map(
+        (t) => `          <div className="list-row">
+            <span>${escapeJsx(t.text)}</span>
+          </div>`
+      )
+      .join('\n');
+
+    jsxElements.push(`        <div className="card-box list-card">
+${textItems}
+        </div>`);
+  }
+
+  // 5. Buttons
+  if (buttons.length > 0) {
+    const buttonTags = buttons
+      .map((b) => `        <button className="primary-action-btn">${escapeJsx(b.text)}</button>`)
+      .join('\n');
+    jsxElements.push(`        <div className="action-row">\n${buttonTags}\n        </div>`);
+  } else if (!hasElements) {
+    // Fallback if image was empty or completely non-text
+    jsxElements.push(`        <div className="card-box">
+          <p>Visual component structure matching uploaded image colors.</p>
+          <button className="primary-action-btn">Action Button</button>
+        </div>`);
+  }
 
   const reactCode = `import React, { useState } from 'react';
 import './${comp}.css';
 
 export const ${comp}: React.FC = () => {
-  const [activeTab, setActiveTab] = useState(0);
-
   return (
-    <div className="layout-root">
-      {/* Top Header */}
-      <header className="header-container">
-        <div className="brand-group">
-          <div className="brand-dot" />
-          <h2 className="header-title">${comp}</h2>
-        </div>
-        <button className="primary-action-btn">Action</button>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="${isMobileAspect ? 'mobile-content-stack' : 'content-grid'}">
-        {/* Primary Hero / Showcase Card */}
-        <div className="hero-card">
-          <div className="hero-badge">Featured</div>
-          <h3 className="hero-heading">Dynamic Section</h3>
-          <p className="hero-text">Synthesized from uploaded image colors and structure.</p>
-          <div className="hero-cta-row">
-            <button className="accent-button">Explore</button>
-          </div>
-        </div>
-
-        ${
-          !isMobileAspect
-            ? `
-        {/* KPI / Metric Cards Grid */}
-        <div className="metrics-row">
-          <div className="metric-box">
-            <span className="metric-label">Overview A</span>
-            <div className="metric-value">$84,200</div>
-          </div>
-          <div className="metric-box">
-            <span className="metric-label">Overview B</span>
-            <div className="metric-value">12,490</div>
-          </div>
-        </div>
-        `
-            : ''
-        }
-
-        {/* Secondary Content Section */}
-        <div className="secondary-card">
-          <h4 className="card-heading">Active Items</h4>
-          <div className="item-row">
-            <div className="item-left">
-              <div className="item-icon">⚡</div>
-              <span className="item-name">Main Component Layer</span>
-            </div>
-            <span className="item-status">Active</span>
-          </div>
-        </div>
-      </main>
+    <div className="page-container">
+      <div className="main-wrapper">
+${jsxElements.join('\n\n')}
+      </div>
     </div>
   );
 };
@@ -373,166 +278,127 @@ export const ${comp}: React.FC = () => {
 export default ${comp};
 `;
 
-  const cssCode = `.layout-root {
+  const cssCode = `.page-container {
   background-color: ${dominantBg};
   color: ${textColor};
   min-height: 100vh;
-  padding: ${isMobileAspect ? '20px' : '32px'};
+  padding: ${isMobileAspect ? '24px 16px' : '40px 24px'};
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   box-sizing: border-box;
-}
-
-.header-container {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  justify-content: center;
 }
 
-.brand-group {
+.main-wrapper {
+  max-width: ${isMobileAspect ? '420px' : '860px'};
+  width: 100%;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.brand-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background-color: ${accentColor};
+.header-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.header-title {
-  font-size: 20px;
-  font-weight: 700;
+.title-heading {
+  font-size: ${isMobileAspect ? '24px' : '32px'};
+  font-weight: 800;
   margin: 0;
+  color: ${textColor};
+  letter-spacing: -0.5px;
+}
+
+.subtitle-text {
+  font-size: 14px;
+  opacity: 0.75;
+  margin: 0;
+}
+
+.card-box {
+  background-color: ${cardBg};
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.text-input {
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: ${textColor};
+  font-size: 14px;
+  outline: none;
+}
+
+.text-input:focus {
+  border-color: ${accentColor};
+}
+
+.metrics-card {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+  padding: 16px;
+}
+
+.price-item {
+  text-align: center;
+}
+
+.price-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: ${accentColor};
+}
+
+.list-row {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.action-row {
+  display: flex;
+  gap: 12px;
+  flex-direction: ${isMobileAspect ? 'column' : 'row'};
 }
 
 .primary-action-btn {
   background-color: ${accentColor};
   color: #FFFFFF;
   border: none;
-  border-radius: 10px;
-  padding: 8px 18px;
-  font-weight: 600;
+  border-radius: 12px;
+  padding: 14px 24px;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
   transition: opacity 0.2s;
+  text-align: center;
 }
 
 .primary-action-btn:hover {
   opacity: 0.9;
-}
-
-.mobile-content-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 20px;
-}
-
-.hero-card {
-  background-color: ${cardBg};
-  border-radius: 20px;
-  padding: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.hero-badge {
-  display: inline-block;
-  background-color: rgba(99, 102, 241, 0.15);
-  color: ${accentColor};
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: 20px;
-  margin-bottom: 12px;
-}
-
-.hero-heading {
-  font-size: 22px;
-  font-weight: 800;
-  margin: 0 0 8px;
-}
-
-.hero-text {
-  font-size: 14px;
-  opacity: 0.8;
-  margin: 0 0 16px;
-}
-
-.accent-button {
-  background-color: ${accentColor};
-  color: #FFFFFF;
-  border: none;
-  border-radius: 12px;
-  padding: 10px 22px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.metrics-row {
-  display: flex;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.metric-box {
-  flex: 1;
-  background-color: ${cardBg};
-  padding: 18px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.metric-label {
-  font-size: 12px;
-  opacity: 0.7;
-}
-
-.metric-value {
-  font-size: 24px;
-  font-weight: 800;
-  margin-top: 6px;
-}
-
-.secondary-card {
-  background-color: ${cardBg};
-  border-radius: 20px;
-  padding: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.card-heading {
-  font-size: 16px;
-  font-weight: 700;
-  margin: 0 0 14px;
-}
-
-.item-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.item-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.item-status {
-  font-size: 12px;
-  color: ${accentColor};
-  font-weight: 600;
 }
 `;
 
@@ -543,23 +409,14 @@ export default ${comp};
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background-color: ${dominantBg}; color: ${textColor}; padding: 24px; font-family: -apple-system, sans-serif; }
 ${cssCode}
   </style>
 </head>
 <body>
-  <div class="header-container">
-    <div class="brand-group">
-      <div class="brand-dot"></div>
-      <h2 class="header-title">${comp}</h2>
+  <div class="page-container">
+    <div class="main-wrapper">
+${jsxElements.join('\n\n')}
     </div>
-    <button class="primary-action-btn">Action</button>
-  </div>
-  <div class="hero-card">
-    <div class="hero-badge">Detected UI</div>
-    <h3 class="hero-heading">Generated from Uploaded Design</h3>
-    <p class="hero-text">Extracted colors: Background ${dominantBg}, Cards ${cardBg}, Accent ${accentColor}</p>
-    <button class="accent-button">Explore</button>
   </div>
 </body>
 </html>`;
@@ -568,31 +425,32 @@ ${cssCode}
     framework: 'react',
     componentName: comp,
     timestamp: Date.now(),
-    promptNotes: `Generated from image analysis (Palette: ${dominantBg}, ${cardBg}, ${accentColor})`,
+    promptNotes: `Extracted ${elements.length} text elements and palette (${dominantBg}, ${cardBg}, ${accentColor}) directly from your image.`,
     previewHtml,
     files: [
       {
         name: `${comp}.tsx`,
         language: 'typescript',
-        description: 'React functional component customized to uploaded image colors & structure',
+        description: 'React component containing the exact text and elements recognized from your image',
         content: reactCode,
       },
       {
         name: `${comp}.css`,
         language: 'css',
-        description: 'Custom flexbox styles with extracted color palette',
+        description: 'Styles using the exact color tokens detected from your screenshot',
         content: cssCode,
       },
       {
         name: 'README.md',
         language: 'markdown',
-        description: 'Integration guide',
+        description: 'Usage notes',
         content: `# ${comp}
 
-Generated from your uploaded image.
-- **Background**: \`${dominantBg}\`
-- **Cards**: \`${cardBg}\`
-- **Accent**: \`${accentColor}\`
+Generated locally from your uploaded PNG screenshot.
+- **Detected Elements**: ${elements.length}
+- **Primary Color**: \`${dominantBg}\`
+- **Accent Color**: \`${accentColor}\`
+- **Card Background**: \`${cardBg}\`
 `,
       },
     ],
@@ -600,7 +458,14 @@ Generated from your uploaded image.
 }
 
 function generateReactNativeFromAnalysis(analysis: AnalysisSummary, comp: string): GenerationResult {
-  const { dominantBg, accentColor, textColor, cardBg } = analysis;
+  const { dominantBg, accentColor, textColor, cardBg, elements } = analysis;
+
+  const headings = elements.filter((e) => e.type === 'heading' || e.type === 'subheading');
+  const buttons = elements.filter((e) => e.type === 'button');
+  const inputs = elements.filter((e) => e.type === 'input');
+  const otherTexts = elements.filter((e) => e.type === 'text' || e.type === 'price');
+
+  const mainTitle = headings[0]?.text || comp;
 
   const rnCode = `import React from 'react';
 import {
@@ -609,6 +474,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -616,34 +482,67 @@ import {
 export const ${comp}: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="${isDarkColor(hexToRgb(dominantBg) || { r: 0, g: 0, b: 0 }) ? 'light-content' : 'dark-content'}" backgroundColor="${dominantBg}" />
+      <StatusBar barStyle="light-content" backgroundColor="${dominantBg}" />
       <ScrollView contentContainerStyle={styles.container}>
-        {/* Header Bar */}
+        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>${comp}</Text>
-          <TouchableOpacity style={styles.headerBtn}>
-            <Text style={styles.headerBtnText}>🔔</Text>
-          </TouchableOpacity>
+          <Text style={styles.title}>${escapeJsx(mainTitle)}</Text>
         </View>
 
-        {/* Hero Card */}
-        <View style={styles.heroCard}>
-          <Text style={styles.heroBadge}>FEATURED</Text>
-          <Text style={styles.heroTitle}>Image-Tailored UI</Text>
-          <Text style={styles.heroSub}>Extracted from your actual screenshot palette</Text>
-          <TouchableOpacity style={styles.actionButton}>
-            <Text style={styles.actionBtnText}>Primary Button</Text>
-          </TouchableOpacity>
-        </View>
+        ${
+          inputs.length > 0
+            ? `
+        {/* Detected Form Inputs */}
+        <View style={styles.card}>
+${inputs
+  .map(
+    (inp) => `          <View style={styles.inputBox}>
+            <Text style={styles.label}>${escapeJsx(inp.text)}</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter ${escapeJsx(inp.text.toLowerCase())}"
+              placeholderTextColor="rgba(255, 255, 255, 0.4)"
+              secureTextEntry={${inp.text.toLowerCase().includes('password')}}
+            />
+          </View>`
+  )
+  .join('\n')}
+        </View>`
+            : ''
+        }
 
-        {/* Content Section */}
-        <View style={styles.contentSection}>
-          <Text style={styles.sectionHeader}>Detected Layout Items</Text>
-          <View style={styles.listItem}>
-            <Text style={styles.listText}>Layer Component</Text>
-            <Text style={styles.listTag}>Active</Text>
-          </View>
-        </View>
+        ${
+          otherTexts.length > 0
+            ? `
+        {/* Detected Content Items */}
+        <View style={styles.card}>
+${otherTexts
+  .slice(0, 6)
+  .map(
+    (item) => `          <View style={styles.listItem}>
+            <Text style={styles.itemText}>${escapeJsx(item.text)}</Text>
+          </View>`
+  )
+  .join('\n')}
+        </View>`
+            : ''
+        }
+
+        ${
+          buttons.length > 0
+            ? buttons
+                .map(
+                  (btn) => `
+        <TouchableOpacity style={styles.button} activeOpacity={0.8}>
+          <Text style={styles.buttonText}>${escapeJsx(btn.text)}</Text>
+        </TouchableOpacity>`
+                )
+                .join('\n')
+            : `
+        <TouchableOpacity style={styles.button} activeOpacity={0.8}>
+          <Text style={styles.buttonText}>Action</Text>
+        </TouchableOpacity>`
+        }
       </ScrollView>
     </SafeAreaView>
   );
@@ -659,88 +558,58 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    marginVertical: 10,
   },
-  headerTitle: {
-    fontSize: 22,
+  title: {
+    fontSize: 26,
     fontWeight: '800',
     color: '${textColor}',
   },
-  headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+  card: {
     backgroundColor: '${cardBg}',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 20,
+    padding: 20,
+    gap: 14,
   },
-  headerBtnText: {
-    fontSize: 16,
+  inputBox: {
+    gap: 6,
   },
-  heroCard: {
-    backgroundColor: '${cardBg}',
-    borderRadius: 22,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  heroBadge: {
-    color: '${accentColor}',
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  heroTitle: {
-    fontSize: 24,
-    fontWeight: '800',
+  label: {
     color: '${textColor}',
-    marginBottom: 6,
-  },
-  heroSub: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginBottom: 16,
+    fontWeight: '600',
+    opacity: 0.8,
   },
-  actionButton: {
-    backgroundColor: '${accentColor}',
-    borderRadius: 14,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  actionBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  contentSection: {
-    marginTop: 8,
-    gap: 10,
-  },
-  sectionHeader: {
-    fontSize: 16,
-    fontWeight: '700',
+  input: {
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    borderRadius: 10,
+    padding: 12,
     color: '${textColor}',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   listItem: {
-    backgroundColor: '${cardBg}',
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
-  listText: {
+  itemText: {
     color: '${textColor}',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  listTag: {
-    color: '${accentColor}',
+  button: {
+    backgroundColor: '${accentColor}',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
     fontWeight: '700',
-    fontSize: 12,
   },
 });
 
@@ -751,19 +620,19 @@ export default ${comp};
     framework: 'react-native',
     componentName: comp,
     timestamp: Date.now(),
-    promptNotes: 'Synthesized React Native component matching the color palette and layout of the uploaded image.',
-    previewHtml: `<!DOCTYPE html><html><body style="background:${dominantBg};color:${textColor};padding:20px;font-family:sans-serif;"><div style="background:${cardBg};padding:20px;border-radius:20px;"><h3>${comp}</h3><p style="color:${accentColor};margin-top:10px;">Rendered with extracted colors</p></div></body></html>`,
+    promptNotes: 'Synthesized React Native component matching your exact image elements.',
+    previewHtml: `<!DOCTYPE html><html><body style="background:${dominantBg};color:${textColor};padding:24px;font-family:sans-serif;"><div style="background:${cardBg};padding:20px;border-radius:18px;"><h2>${escapeJsx(mainTitle)}</h2></div></body></html>`,
     files: [
       {
         name: `${comp}.tsx`,
         language: 'typescript',
-        description: 'React Native component with tailored StyleSheet',
+        description: 'React Native screen containing recognized image text and inputs',
         content: rnCode,
       },
       {
         name: 'README.md',
         language: 'markdown',
-        description: 'React Native usage',
+        description: 'React Native guide',
         content: `# ${comp} React Native`,
       },
     ],
@@ -771,10 +640,106 @@ export default ${comp};
 }
 
 function generateAngularFromAnalysis(analysis: AnalysisSummary, comp: string): GenerationResult {
-  const { dominantBg, accentColor, textColor, cardBg } = analysis;
+  const { dominantBg, accentColor, textColor, cardBg, elements } = analysis;
   const kebab = comp.toLowerCase();
+  const headings = elements.filter((e) => e.type === 'heading' || e.type === 'subheading');
+  const buttons = elements.filter((e) => e.type === 'button');
+  const inputs = elements.filter((e) => e.type === 'input');
 
-  const tsCode = `import { Component } from '@angular/core';
+  const mainHeading = headings[0]?.text || comp;
+
+  const htmlContent = `<div class="container">
+  <div class="header">
+    <h1>${escapeJsx(mainHeading)}</h1>
+  </div>
+
+  ${
+    inputs.length > 0
+      ? `
+  <div class="card form-card">
+${inputs
+  .map(
+    (inp) => `    <div class="field">
+      <label>${escapeJsx(inp.text)}</label>
+      <input type="text" placeholder="Enter ${escapeJsx(inp.text.toLowerCase())}" />
+    </div>`
+  )
+  .join('\n')}
+  </div>`
+      : ''
+  }
+
+  ${
+    buttons.length > 0
+      ? buttons.map((b) => `  <button class="cta-btn">${escapeJsx(b.text)}</button>`).join('\n')
+      : `  <button class="cta-btn">Submit</button>`
+  }
+</div>`;
+
+  const cssContent = `.container {
+  background-color: ${dominantBg};
+  color: ${textColor};
+  min-height: 100vh;
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-family: sans-serif;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.header h1 {
+  font-size: 28px;
+  font-weight: 800;
+  margin: 0;
+}
+.card {
+  background-color: ${cardBg};
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.field input {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: ${textColor};
+}
+.cta-btn {
+  background-color: ${accentColor};
+  color: #fff;
+  border: none;
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+`;
+
+  return {
+    framework: 'angular',
+    componentName: comp,
+    timestamp: Date.now(),
+    promptNotes: 'Synthesized Angular standalone component with OCR-extracted elements.',
+    previewHtml: `<!DOCTYPE html><html><head><style>${cssContent}</style></head><body>${htmlContent}</body></html>`,
+    files: [
+      {
+        name: `${kebab}.component.ts`,
+        language: 'typescript',
+        description: 'Angular Standalone Component TypeScript',
+        content: `import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 @Component({
@@ -784,88 +749,31 @@ import { CommonModule } from '@angular/common';
   templateUrl: './${kebab}.component.html',
   styleUrls: ['./${kebab}.component.css']
 })
-export class ${comp}Component {
-  title = '${comp}';
-}
-`;
-
-  const htmlCode = `<div class="container">
-  <header class="header">
-    <h2>{{ title }}</h2>
-    <button class="action-btn">Action</button>
-  </header>
-  <div class="card">
-    <span class="badge">EXTRACTED UI</span>
-    <h3>Custom Visual Component</h3>
-    <p>Color tokens: ${dominantBg} | ${cardBg} | ${accentColor}</p>
-  </div>
-</div>
-`;
-
-  const cssCode = `.container {
-  background-color: ${dominantBg};
-  color: ${textColor};
-  padding: 24px;
-  min-height: 100vh;
-  font-family: sans-serif;
-}
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.action-btn {
-  background-color: ${accentColor};
-  color: #fff;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.card {
-  background-color: ${cardBg};
-  border-radius: 16px;
-  padding: 20px;
-}
-.badge {
-  color: ${accentColor};
-  font-size: 11px;
-  font-weight: bold;
-}
-`;
-
-  return {
-    framework: 'angular',
-    componentName: comp,
-    timestamp: Date.now(),
-    promptNotes: 'Synthesized Angular standalone component matching uploaded image properties.',
-    previewHtml: `<!DOCTYPE html><html><head><style>${cssCode}</style></head><body>${htmlCode}</body></html>`,
-    files: [
-      {
-        name: `${kebab}.component.ts`,
-        language: 'typescript',
-        description: 'Angular Standalone Component TypeScript',
-        content: tsCode,
+export class ${comp}Component {}
+`,
       },
       {
         name: `${kebab}.component.html`,
         language: 'html',
-        description: 'Angular Component Template HTML',
-        content: htmlCode,
+        description: 'Template with recognized image elements',
+        content: htmlContent,
       },
       {
         name: `${kebab}.component.css`,
         language: 'css',
-        description: 'Angular Scoped Styles',
-        content: cssCode,
+        description: 'Styles with extracted color tokens',
+        content: cssContent,
       },
       {
         name: 'README.md',
         language: 'markdown',
-        description: 'Angular documentation',
+        description: 'Angular docs',
         content: `# ${comp}Component Angular`,
       },
     ],
   };
+}
+
+function escapeJsx(text: string): string {
+  return text.replace(/[{}]/g, '').trim();
 }
