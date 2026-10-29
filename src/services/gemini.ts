@@ -1,4 +1,5 @@
 import { CodeFile, Framework, GenerationOptions, GenerationResult } from '../types';
+import { analyzeImageLocally, generateCodeFromAnalysis } from './localVisionEngine';
 import { getMockGeneration } from './mockGenerator';
 
 // Supported Gemini Models
@@ -29,11 +30,11 @@ export async function generateCodeFromImage(
   apiKey: string,
   isMockMode: boolean
 ): Promise<GenerationResult> {
-  // If mock mode is explicitly selected or no API key is provided
+  // If no API key is provided or local mode is active:
+  // Run the local computer vision analyzer directly on the user's actual image!
   if (isMockMode || !apiKey.trim()) {
-    // Provide a small artificial delay to give the realistic generation experience
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    return getMockGeneration(options.framework, options.componentName);
+    const analysis = await analyzeImageLocally(imageDataUrl);
+    return generateCodeFromAnalysis(analysis, options.framework, options.componentName);
   }
 
   const { mimeType, data } = extractBase64(imageDataUrl);
