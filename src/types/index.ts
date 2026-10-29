@@ -29,6 +29,7 @@ export interface GenerationOptions {
   addMockData: boolean;
   customPrompt: string;
   model: string;
+  provider?: 'local-ollama' | 'gemini';
 }
 
 export interface SampleImage {

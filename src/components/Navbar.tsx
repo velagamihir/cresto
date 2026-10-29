@@ -1,25 +1,22 @@
 import React from 'react';
 import { Framework } from '../types';
-import { GEMINI_MODELS } from '../services/gemini';
-import { Sparkles, Key, CheckCircle2, AlertTriangle, Layers, Smartphone, Globe } from 'lucide-react';
+import { Sparkles, Key, CheckCircle2, Cpu, Smartphone, Cloud } from 'lucide-react';
 
 interface NavbarProps {
   framework: Framework;
   onFrameworkChange: (f: Framework) => void;
-  selectedModel: string;
-  onModelChange: (model: string) => void;
+  providerMode: 'local-ollama' | 'gemini';
+  onProviderModeChange: (mode: 'local-ollama' | 'gemini') => void;
   hasApiKey: boolean;
-  isMockMode: boolean;
   onOpenSettings: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   framework,
   onFrameworkChange,
-  selectedModel,
-  onModelChange,
+  providerMode,
+  onProviderModeChange,
   hasApiKey,
-  isMockMode,
   onOpenSettings,
 }) => {
   return (
@@ -34,7 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span style={styles.title}>Cresto</span>
               <span style={styles.badge}>VISION TO CODE</span>
             </div>
-            <div style={styles.subtitle}>PNG Mockup → Production React / React Native / Angular</div>
+            <div style={styles.subtitle}>PNG Mockup / .fig → Production React / React Native / Angular</div>
           </div>
         </div>
 
@@ -77,42 +74,51 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
 
-        {/* Right Actions: Model & API Settings */}
+        {/* AI Engine Selector (Local Moondream vs Cloud Gemini) */}
         <div style={styles.actionsGroup}>
-          <div style={styles.modelSelectorContainer}>
-            <select
-              value={selectedModel}
-              onChange={(e) => onModelChange(e.target.value)}
-              style={styles.modelSelect}
-              title="Select Gemini Vision Model"
+          <div style={styles.engineToggleGroup}>
+            <button
+              style={{
+                ...styles.engineBtn,
+                ...(providerMode === 'local-ollama' ? styles.engineBtnActiveLocal : {}),
+              }}
+              onClick={() => onProviderModeChange('local-ollama')}
+              title="Run 100% locally on your CPU with Moondream (No API Key needed)"
             >
-              {GEMINI_MODELS.map((m) => (
-                <option key={m.id} value={m.id} style={{ background: '#111827', color: '#fff' }}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+              <Cpu size={14} color={providerMode === 'local-ollama' ? '#34D399' : '#94A3B8'} />
+              <span>Local (Moondream)</span>
+            </button>
+
+            <button
+              style={{
+                ...styles.engineBtn,
+                ...(providerMode === 'gemini' ? styles.engineBtnActiveCloud : {}),
+              }}
+              onClick={() => onProviderModeChange('gemini')}
+              title="Use Google Gemini Vision Cloud API"
+            >
+              <Cloud size={14} color={providerMode === 'gemini' ? '#38BDF8' : '#94A3B8'} />
+              <span>Gemini Cloud</span>
+            </button>
           </div>
 
-          <button
-            style={{
-              ...styles.settingsButton,
-              ...(hasApiKey && !isMockMode ? styles.settingsButtonConnected : styles.settingsButtonMock),
-            }}
-            onClick={onOpenSettings}
-          >
-            {hasApiKey && !isMockMode ? (
+          <button style={styles.settingsButton} onClick={onOpenSettings} title="Configure API & Model Settings">
+            {providerMode === 'local-ollama' ? (
               <>
                 <CheckCircle2 size={15} color="#10B981" />
-                <span>API Key Connected</span>
+                <span style={{ color: '#A7F3D0' }}>Local AI Active</span>
+              </>
+            ) : hasApiKey ? (
+              <>
+                <CheckCircle2 size={15} color="#38BDF8" />
+                <span style={{ color: '#BAE6FD' }}>Gemini Connected</span>
               </>
             ) : (
               <>
-                <AlertTriangle size={15} color="#F59E0B" />
-                <span>{isMockMode ? 'Demo Mode Active' : 'Configure API Key'}</span>
+                <Key size={14} color="#F59E0B" />
+                <span style={{ color: '#FDE68A' }}>Set API Key</span>
               </>
             )}
-            <Key size={14} style={{ opacity: 0.7 }} />
           </button>
         </div>
       </div>
@@ -237,19 +243,37 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
   },
-  modelSelectorContainer: {
-    position: 'relative',
-  },
-  modelSelect: {
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-    border: '1px solid rgba(255, 255, 255, 0.12)',
+  engineToggleGroup: {
+    display: 'flex',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
     borderRadius: 10,
-    color: '#E2E8F0',
+    padding: 3,
+    gap: 3,
+  },
+  engineBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    borderRadius: 7,
+    border: 'none',
+    backgroundColor: 'transparent',
+    color: '#94A3B8',
     fontSize: 12,
     fontWeight: 600,
-    padding: '8px 12px',
     cursor: 'pointer',
-    outline: 'none',
+    transition: 'all 0.2s',
+  },
+  engineBtnActiveLocal: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    color: '#34D399',
+    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.2)',
+  },
+  engineBtnActiveCloud: {
+    backgroundColor: 'rgba(56, 189, 248, 0.2)',
+    color: '#38BDF8',
+    boxShadow: '0 2px 8px rgba(56, 189, 248, 0.2)',
   },
   settingsButton: {
     display: 'flex',
@@ -258,19 +282,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 14px',
     borderRadius: 10,
     border: '1px solid rgba(255, 255, 255, 0.12)',
+    backgroundColor: 'rgba(30, 41, 59, 0.6)',
     fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-  },
-  settingsButtonConnected: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    color: '#A7F3D0',
-  },
-  settingsButtonMock: {
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-    color: '#FDE68A',
   },
 };

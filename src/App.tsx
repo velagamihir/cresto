@@ -9,11 +9,13 @@ import { LivePreview } from './components/LivePreview';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { generateCodeFromImage } from './services/gemini';
 import { generateCodeFromFigma } from './services/figmaCodeGenerator';
+import { generateCodeWithOllama } from './services/ollama';
 import { ParsedFigmaFile } from './services/figmaParser';
-import { Code2, Eye, CheckCircle2, Zap, Layers, Sparkles } from 'lucide-react';
+import { Code2, Eye, CheckCircle2, Zap, Layers, Sparkles, Cpu } from 'lucide-react';
 
 export function App() {
   const [framework, setFramework] = useState<Framework>('react');
+  const [providerMode, setProviderMode] = useState<'local-ollama' | 'gemini'>('local-ollama');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('cresto_gemini_api_key') || '');
   const [isMockMode, setIsMockMode] = useState<boolean>(
@@ -126,30 +128,29 @@ export function App() {
     if (!imagePreview) return;
 
     setIsGenerating(true);
-    setGenerationStep('Analyzing visual composition & geometry...');
+    setGenerationStep(
+      providerMode === 'local-ollama'
+        ? 'Running local Moondream vision model on your CPU...'
+        : 'Analyzing visual composition with Gemini...'
+    );
 
     try {
-      const stepTimer1 = setTimeout(() => {
-        setGenerationStep(`Synthesizing ${framework === 'react-native' ? 'React Native' : framework} components...`);
-      }, 700);
-
-      const stepTimer2 = setTimeout(() => {
-        setGenerationStep('Generating styles & interactive preview...');
-      }, 1400);
-
       const finalOptions: GenerationOptions = {
         ...options,
         framework,
         model: selectedModel,
+        provider: providerMode,
         customPrompt: refinementInstructions
           ? `${options.customPrompt ? options.customPrompt + '. ' : ''}Refinement: ${refinementInstructions}`
           : options.customPrompt,
       };
 
-      const result = await generateCodeFromImage(imagePreview, finalOptions, apiKey, isMockMode);
-
-      clearTimeout(stepTimer1);
-      clearTimeout(stepTimer2);
+      let result: GenerationResult;
+      if (providerMode === 'local-ollama') {
+        result = await generateCodeWithOllama(imagePreview, finalOptions, 'moondream');
+      } else {
+        result = await generateCodeFromImage(imagePreview, finalOptions, apiKey, isMockMode);
+      }
 
       setGenerationResult(result);
       setActiveRightTab('code');
@@ -159,10 +160,10 @@ export function App() {
         particleCount: 80,
         spread: 60,
         origin: { y: 0.6 },
-        colors: ['#6366F1', '#38BDF8', '#10B981', '#EC4899'],
+        colors: ['#34D399', '#6366F1', '#38BDF8', '#10B981'],
       });
     } catch (err: any) {
-      alert(`Generation failed: ${err.message || 'Please check your API key or network connection.'}`);
+      alert(`Generation failed: ${err.message || 'Please check your connection.'}`);
     } finally {
       setIsGenerating(false);
       setGenerationStep('');
@@ -175,10 +176,9 @@ export function App() {
       <Navbar
         framework={framework}
         onFrameworkChange={handleFrameworkChange}
-        selectedModel={selectedModel}
-        onModelChange={setSelectedModel}
+        providerMode={providerMode}
+        onProviderModeChange={setProviderMode}
         hasApiKey={Boolean(apiKey.trim())}
-        isMockMode={isMockMode}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
@@ -262,9 +262,14 @@ export function App() {
                     <Zap size={14} color="#0ACF83" />
                     <span style={{ color: '#A7F3D0', fontWeight: 700 }}>Figma Vector Engine</span>
                   </>
+                ) : providerMode === 'local-ollama' ? (
+                  <>
+                    <Cpu size={14} color="#34D399" />
+                    <span style={{ color: '#A7F3D0', fontWeight: 700 }}>Local Moondream AI</span>
+                  </>
                 ) : (
                   <>
-                    <CheckCircle2 size={14} color="#10B981" />
+                    <CheckCircle2 size={14} color="#38BDF8" />
                     <span>{generationResult.componentName}</span>
                   </>
                 )}
