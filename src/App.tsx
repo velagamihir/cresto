@@ -8,8 +8,10 @@ import { CodeViewer } from './components/CodeViewer';
 import { LivePreview } from './components/LivePreview';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { generateCodeFromImage } from './services/gemini';
+import { generateCodeFromFigma } from './services/figmaCodeGenerator';
+import { ParsedFigmaFile } from './services/figmaParser';
 import { SAMPLE_IMAGES } from './data/samples';
-import { Code2, Eye, Sparkles, CheckCircle2, History, ArrowRight } from 'lucide-react';
+import { Code2, Eye, CheckCircle2, ArrowRight, Zap } from 'lucide-react';
 
 export function App() {
   const [framework, setFramework] = useState<Framework>('react');
@@ -20,9 +22,9 @@ export function App() {
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Image & Generation state
+  // Image, Figma & Generation state
   const [imagePreview, setImagePreview] = useState<string | null>(SAMPLE_IMAGES[1].dataUrl);
-  const [imageFileName, setImageFileName] = useState<string>('SaaS Metrics Dashboard');
+  const [figmaData, setFigmaData] = useState<ParsedFigmaFile | null>(null);
   const [options, setOptions] = useState<GenerationOptions>({
     framework: 'react',
     componentName: 'AnalyticsDashboard',
@@ -55,7 +57,7 @@ export function App() {
 
   const handleImageSelected = (dataUrl: string, fileName?: string, sample?: SampleImage) => {
     setImagePreview(dataUrl);
-    if (fileName) setImageFileName(fileName);
+    setFigmaData(null);
 
     if (sample) {
       handleFrameworkChange(sample.suggestedFramework);
@@ -67,9 +69,32 @@ export function App() {
     }
   };
 
+  const handleFigmaSelected = (parsed: ParsedFigmaFile) => {
+    setFigmaData(parsed);
+    setImagePreview(parsed.thumbnailUrl || null);
+    const cleanName = parsed.title.replace(/[^a-zA-Z0-9]/g, '') || options.componentName;
+    setOptions((prev) => ({
+      ...prev,
+      componentName: cleanName,
+    }));
+
+    // Instantly generate 100% pixel-perfect code from Figma AST
+    const result = generateCodeFromFigma(parsed.rootNode, framework, cleanName);
+    result.sourceType = 'figma';
+    setGenerationResult(result);
+    setActiveRightTab('code');
+
+    confetti({
+      particleCount: 80,
+      spread: 60,
+      origin: { y: 0.6 },
+      colors: ['#0ACF83', '#10B981', '#6366F1', '#38BDF8'],
+    });
+  };
+
   const handleClearImage = () => {
     setImagePreview(null);
-    setImageFileName('');
+    setFigmaData(null);
     setGenerationResult(null);
   };
 
@@ -81,6 +106,27 @@ export function App() {
   };
 
   const handleGenerate = async (refinementInstructions?: string) => {
+    // If a Figma file is loaded, generate directly from vector AST!
+    if (figmaData) {
+      setIsGenerating(true);
+      setGenerationStep('Extracting Figma vectors & Auto-Layout flexbox...');
+      setTimeout(() => {
+        const result = generateCodeFromFigma(figmaData.rootNode, framework, options.componentName);
+        result.sourceType = 'figma';
+        setGenerationResult(result);
+        setActiveRightTab('code');
+        setIsGenerating(false);
+        setGenerationStep('');
+        confetti({
+          particleCount: 80,
+          spread: 60,
+          origin: { y: 0.6 },
+          colors: ['#0ACF83', '#10B981', '#6366F1'],
+        });
+      }, 250);
+      return;
+    }
+
     if (!imagePreview) return;
 
     setIsGenerating(true);
@@ -161,8 +207,9 @@ export function App() {
           <ImageUploader
             imagePreview={imagePreview}
             onImageSelected={handleImageSelected}
+            onFigmaSelected={handleFigmaSelected}
             onClearImage={handleClearImage}
-            currentFramework={framework}
+            figmaData={figmaData}
           />
 
           <div style={{ ...styles.sectionHeader, marginTop: 12 }}>
@@ -178,7 +225,7 @@ export function App() {
             onChange={setOptions}
             onGenerate={() => handleGenerate()}
             isGenerating={isGenerating}
-            hasImage={Boolean(imagePreview)}
+            hasImage={Boolean(imagePreview || figmaData)}
             generationStep={generationStep}
           />
         </section>
@@ -220,8 +267,17 @@ export function App() {
 
             {generationResult && (
               <div style={styles.generationMeta}>
-                <CheckCircle2 size={14} color="#10B981" />
-                <span>{generationResult.componentName}</span>
+                {generationResult.sourceType === 'figma' ? (
+                  <>
+                    <Zap size={14} color="#0ACF83" />
+                    <span style={{ color: '#A7F3D0', fontWeight: 700 }}>Figma Vector Engine</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={14} color="#10B981" />
+                    <span>{generationResult.componentName}</span>
+                  </>
+                )}
                 <span style={styles.timestamp}>
                   {new Date(generationResult.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>

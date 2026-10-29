@@ -18,6 +18,7 @@ export interface GenerationResult {
   cssCode?: string;
   timestamp: number;
   promptNotes?: string;
+  sourceType?: 'png' | 'figma';
 }
 
 export interface GenerationOptions {
